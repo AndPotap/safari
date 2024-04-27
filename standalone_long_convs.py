@@ -9,6 +9,7 @@ import torch.nn.functional as F
 
 from einops import rearrange
 from opt_einsum import contract
+from standalone_hyena import HyenaOperator
 
 
 class OurModule(nn.Module):
@@ -23,9 +24,12 @@ class OurModule(nn.Module):
             self.register_parameter(name, nn.Parameter(tensor))
 
             optim = {}
-            if lr is not None: optim["lr"] = lr
-            if wd is not None: optim["weight_decay"] = wd
+            if lr is not None:
+                optim["lr"] = lr
+            if wd is not None:
+                optim["weight_decay"] = wd
             setattr(getattr(self, name), "_optim", optim)
+
 
 class LongConv(OurModule):
     def __init__(
@@ -34,13 +38,13 @@ class LongConv(OurModule):
             L,
             channels=2,
             dropout=0.1,
-            kernel_learning_rate=None, 
-            kernel_lam=0.1, 
+            kernel_learning_rate=None,
+            kernel_lam=0.1,
             kernel_dropout=0,
     ):
         super().__init__()
         self.H = H
-        self.L = L * 2 # for causal conv
+        self.L = L * 2  # for causal conv
         self.channels = channels
         self.dropout = nn.Dropout(p=dropout)
         self.kernel_learning_rate = kernel_learning_rate
@@ -58,7 +62,7 @@ class LongConv(OurModule):
             nn.GLU(dim=-1),
         )
 
-        self.kernel = torch.nn.Parameter(torch.randn(self.channels, self.H, self.L) * 0.002) #(c,H,L) 
+        self.kernel = torch.nn.Parameter(torch.randn(self.channels, self.H, self.L) * 0.002)  # (c,H,L)
 
         self.register("kernel", self.kernel, kernel_learning_rate)
 
@@ -68,14 +72,14 @@ class LongConv(OurModule):
         k = self.kernel
 
         # squash operator
-        k = F.relu(torch.abs(k)-self.kernel_lam)*torch.sign(k)
+        k = F.relu(torch.abs(k) - self.kernel_lam) * torch.sign(k)
         k = self.kernel_drop(k)
-        
+
         # use FFT to compute convolution
-        k_f = torch.fft.rfft(k, n=2*L)
-        u_f = torch.fft.rfft(u, n=2*L)
+        k_f = torch.fft.rfft(k, n=2 * L)
+        u_f = torch.fft.rfft(u, n=2 * L)
         y_f = contract('bhl,chl->bchl', u_f, k_f)
-        y = torch.fft.irfft(y_f, n=2*L)[..., :L]
+        y = torch.fft.irfft(y_f, n=2 * L)[..., :L]
 
         # Compute skip connection
         y = y + contract('bhl,ch->bchl', u, self.D)
@@ -91,6 +95,7 @@ class LongConv(OurModule):
         y = y.transpose(-1, -2)
 
         return y
+
 
 class LongConvModel(nn.Module):
 
@@ -117,7 +122,8 @@ class LongConvModel(nn.Module):
         self.dropouts = nn.ModuleList()
         for _ in range(n_layers):
             self.conv_layers.append(
-                LongConv(d_model, L=1024, dropout=dropout, **conv_kwargs)
+                # LongConv(d_model, L=1024, dropout=dropout, **conv_kwargs)
+                HyenaOperator(d_model, 1024, dropout=dropout, **conv_kwargs)
             )
             self.norms.append(nn.LayerNorm(d_model))
             self.dropouts.append(nn.Dropout1d(dropout))
@@ -140,7 +146,8 @@ class LongConvModel(nn.Module):
                 z = norm(z.transpose(-1, -2)).transpose(-1, -2)
 
             # Apply long conv block
-            z = layer(z)
+            z = layer(z.transpose(-1, -2)).transpose(-1, -2)
+            # z = layer(z)
 
             # Dropout on the output of the conv block
             z = dropout(z)
