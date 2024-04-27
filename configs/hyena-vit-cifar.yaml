@@ -6,8 +6,15 @@ defaults:
   - override /scheduler: cosine_warmup_timm
 
 dataset:
+  _name_: cifar
   permute: 2d_transpose
   augment: true
+  grayscale: False
+  tokenize: False
+  cutout: False
+  random_erasing: False
+  val_split: 0.1
+  seed: 42
 
 task:
   # 2 options for soft_cross_entropy (for mixup)
@@ -41,6 +48,30 @@ train:
     normalization_weight_decay: false
   remove_test_loader_in_eval: true
   global_batch_size: 50  # effective batch size (handled with multiple gpus, and accumulate_grad_batches)
+  # These three options are used by callbacks (checkpoint, monitor) and scheduler
+  # Most of them are task dependent and are set by the pipeline
+  test: True # Test after training
+  debug: False # Special settings to make debugging more convenient
+  ignore_warnings: False # Disable python warnings
+
+  # These control state passing between batches
+  state:
+    mode: none # [ None | 'none' | 'reset' | 'bptt' | 'tbptt' ]
+    n_context: 1 # How many steps to use as memory context. Must be >= 0 or None (null), meaning infinite context
+    n_context_eval: 1 # Context at evaluation time
+
+  disable_dataset: False # Disable dataset loading
+  validate_at_start: false
+
+  post_init_hook: 
+    _name_: None # After initializing model, call method on model
+
+  ckpt: null
+
+  layer_decay: # Used for ImageNet finetuning
+    _name_: null
+    decay: 0.0
+  
 
 optimizer:
   lr: 0.001

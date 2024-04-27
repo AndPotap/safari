@@ -16,12 +16,14 @@ from einops import rearrange
 from src.utils import instantiate
 import src.utils.registry as registry
 
+
 class LinearResidual(nn.Linear):
     """Wrap nn.Linear to return the residual as well. For compatibility with FusedDense.
     """
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         return super().forward(input), input
+
 
 class SelfAttention(nn.Module):
     """Implement the scaled dot product attention with softmax.
@@ -70,12 +72,13 @@ class SelfAttention(nn.Module):
         output = torch.einsum('bhts,bshd->bthd', attention_drop, v)
         return output
 
+
 class MHA(nn.Module):
     """Multi-head self-attention and cross-attention
     """
 
     def __init__(self, embed_dim, num_heads, bias=True, dropout=0.0,
-                 softmax_scale=None, causal=False, layer_idx=None, dwconv=False,return_residual=False,device=None, dtype=None) -> None:
+                 softmax_scale=None, causal=False, layer_idx=None, dwconv=False, return_residual=False, device=None, dtype=None) -> None:
         """
             return_residual: whether to return the input x along with the output. This is for
                 performance reason: for post-norm architecture, returning the input allows us
@@ -95,7 +98,7 @@ class MHA(nn.Module):
 
         linear_cls = nn.Linear
         linear_resid_cls = LinearResidual
-        inner_attn_cls =  SelfAttention
+        inner_attn_cls = SelfAttention
 
         if not self.return_residual:
             self.Wqkv = linear_cls(embed_dim, 3 * embed_dim, bias=bias, **factory_kwargs)
@@ -188,6 +191,7 @@ class GPT2Embeddings(nn.Module):
             embeddings = embeddings + position_embeddings
         return embeddings
 
+
 class Mlp(nn.Module):
 
     def __init__(self, in_features, hidden_features=None, out_features=None, activation=F.gelu,
@@ -210,11 +214,12 @@ class Mlp(nn.Module):
         y = self.fc2(y)
         return y if not self.return_residual else (y, x)
 
+
 class Block(nn.Module):
 
     def __init__(self, dim, mixer_cls=None, mlp_cls=None, norm_cls=nn.LayerNorm,
                  dropout_cls=nn.Dropout, prenorm=True, resid_dropout1=0., resid_dropout2=0.,
-                 drop_path1=0., drop_path2=0., 
+                 drop_path1=0., drop_path2=0.,
                  return_residual=False,
                  residual_in_fp32=False):
         """
@@ -253,7 +258,7 @@ class Block(nn.Module):
             self.drop_path2 = StochasticDepth(drop_path2, mode='row')
             self.norm2 = norm_cls(dim)
 
-    def forward(self, hidden_states, residual = None,
+    def forward(self, hidden_states, residual=None,
                 mixer_subset=None, mixer_kwargs=None):
         r"""Pass the input through the encoder layer.
         Args:
@@ -306,6 +311,7 @@ class Block(nn.Module):
 
             return hidden_states
 
+
 def create_mixer_cls(layer=None,
                      attn_layer_idx=None, attn_cfg=None, layer_idx=None,
                      device=None, dtype=None):
@@ -316,7 +322,7 @@ def create_mixer_cls(layer=None,
         mha_cls = MHA
 
         mixer_cls = partial(mha_cls, causal=causal, layer_idx=layer_idx,
-                            **(attn_cfg if attn_cfg is not None else {}),**factory_kwargs)
+                            **(attn_cfg if attn_cfg is not None else {}), **factory_kwargs)
     else:
         mixer_cls = instantiate(registry.layer, layer, partial=True, layer_idx=layer_idx, **factory_kwargs)
     return mixer_cls
@@ -327,7 +333,7 @@ def create_mlp_cls(d_model, d_inner=None, device=None, dtype=None):
     inner_dim = d_inner if d_inner is not None else 4 * d_model
 
     mlp_cls = partial(Mlp, hidden_features=inner_dim,
-                          activation=partial(F.gelu, approximate='tanh'), **factory_kwargs)
+                      activation=partial(F.gelu, approximate='tanh'), **factory_kwargs)
 
     return mlp_cls
 
@@ -347,7 +353,7 @@ def create_block(d_model, d_inner=None,
                              **factory_kwargs)
     norm_cls = partial(nn.LayerNorm, eps=layer_norm_epsilon, **factory_kwargs)
     block = Block(d_model, mixer_cls, mlp_cls, norm_cls=norm_cls,
-                  prenorm=True, resid_dropout1=resid_dropout1, resid_dropout2=resid_dropout2,residual_in_fp32=residual_in_fp32)
+                  prenorm=True, resid_dropout1=resid_dropout1, resid_dropout2=resid_dropout2, residual_in_fp32=residual_in_fp32)
     block.layer_idx = layer_idx
     return block
 
@@ -391,22 +397,21 @@ class LMBackbone(nn.Module):
                  process_group=None, layer=None,
                  attn_layer_idx=None, attn_cfg=None, max_position_embeddings=0,
                  resid_dropout: float = 0.0, embed_dropout: float = 0.1,
-                 layer_norm_epsilon: float = 1e-5, initializer_cfg=None,residual_in_fp32=False,
+                 layer_norm_epsilon: float = 1e-5, initializer_cfg=None, residual_in_fp32=False,
                  device=None, dtype=None, **kwargs) -> None:
         factory_kwargs = {'device': device, 'dtype': dtype}
         super().__init__()
         self.process_group = process_group
         self.residual_in_fp32 = residual_in_fp32
         self.embeddings = GPT2Embeddings(d_model, vocab_size, max_position_embeddings,
-                                             **factory_kwargs)
-
+                                         **factory_kwargs)
 
         self.layers = nn.ModuleList([create_block(
             d_model, d_inner=d_inner,
             layer=layer, attn_layer_idx=attn_layer_idx,
             attn_cfg=attn_cfg, layer_norm_epsilon=layer_norm_epsilon,
             resid_dropout1=embed_dropout if i == 0 else resid_dropout,
-            resid_dropout2=resid_dropout, residual_in_fp32=residual_in_fp32,layer_idx=i,
+            resid_dropout2=resid_dropout, residual_in_fp32=residual_in_fp32, layer_idx=i,
             **factory_kwargs,
         ) for i in range(n_layer)])
 
@@ -436,7 +441,7 @@ class SimpleLMHeadModel(nn.Module):
                  layer=None,
                  attn_layer_idx=None, attn_cfg=None, max_position_embeddings=0,
                  resid_dropout: float = 0.0, embed_dropout: float = 0.1,
-                 layer_norm_epsilon: float = 1e-5, initializer_cfg=None,residual_in_fp32=False,
+                 layer_norm_epsilon: float = 1e-5, initializer_cfg=None, residual_in_fp32=False,
                  pad_vocab_size_multiple: int = 1,
                  device=None, dtype=None, **kwargs) -> None:
         factory_kwargs = {'device': device, 'dtype': dtype}
@@ -462,7 +467,7 @@ class SimpleLMHeadModel(nn.Module):
     def tie_weights(self):
         self.lm_head.weight = self.backbone.embeddings.word_embeddings.weight
 
-    def forward(self, input_ids, position_ids=None, state=None): # state for the repo interface
+    def forward(self, input_ids, position_ids=None, state=None):  # state for the repo interface
         hidden_states = self.backbone(input_ids, position_ids=position_ids)
         lm_logits = self.lm_head(hidden_states)
         CausalLMOutput = namedtuple('CausalLMOutput', ['logits'])
