@@ -1,6 +1,7 @@
 '''
 Train a long conv model on sequential CIFAR10 / sequential MNIST with PyTorch for demonstration purposes.
-This code borrows heavily from https://github.com/kuangliu/pytorch-cifar and is based on https://github.com/HazyResearch/state-spaces.
+This code borrows heavily from https://github.com/kuangliu/pytorch-cifar and
+is based on https://github.com/HazyResearch/state-spaces.
 
 * Train standard sequential CIFAR:
     python -m standalone_cifar
@@ -58,16 +59,18 @@ best_acc = 0  # best test accuracy
 start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
 # Data
-print(f'==> Preparing data..')
+print('==> Preparing data..')
+
 
 def split_train_val(train, val_split):
-    train_len = int(len(train) * (1.0-val_split))
+    train_len = int(len(train) * (1.0 - val_split))
     train, val = torch.utils.data.random_split(
         train,
         (train_len, len(train) - train_len),
         generator=torch.Generator().manual_seed(42),
     )
     return train, val
+
 
 if args.grayscale:
     transform = transforms.Compose([
@@ -138,6 +141,7 @@ if args.resume:
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch']
 
+
 def setup_optimizer(model, lr, weight_decay, epochs):
     """
     Following S4, train the convolution layers with a smaller learning rate, with no weight decay.
@@ -181,6 +185,7 @@ def setup_optimizer(model, lr, weight_decay, epochs):
 
     return optimizer, scheduler
 
+
 criterion = nn.CrossEntropyLoss()
 optimizer, scheduler = setup_optimizer(
     model, lr=args.lr, weight_decay=args.weight_decay, epochs=args.epochs
@@ -191,6 +196,8 @@ optimizer, scheduler = setup_optimizer(
 ###############################################################################
 
 # Training
+
+
 def train():
     model.train()
     train_loss = 0
@@ -212,7 +219,7 @@ def train():
 
         pbar.set_description(
             'Batch Idx: (%d/%d) | Loss: %.3f | Train Acc: %.3f%% (%d/%d)' %
-            (batch_idx, len(trainloader), train_loss/(batch_idx+1), 100.*correct/total, correct, total)
+            (batch_idx, len(trainloader), train_loss / (batch_idx + 1), 100. * correct / total, correct, total)
         )
 
 
@@ -236,12 +243,12 @@ def eval(epoch, dataloader, checkpoint=False):
 
             pbar.set_description(
                 'Batch Idx: (%d/%d) | Loss: %.3f | Eval Acc: %.3f%% (%d/%d)' %
-                (batch_idx, len(dataloader), eval_loss/(batch_idx+1), 100.*correct/total, correct, total)
+                (batch_idx, len(dataloader), eval_loss / (batch_idx + 1), 100. * correct / total, correct, total)
             )
 
     # Save checkpoint.
     if checkpoint:
-        acc = 100.*correct/total
+        acc = 100. * correct / total
         if acc > best_acc:
             state = {
                 'model': model.state_dict(),
@@ -255,7 +262,9 @@ def eval(epoch, dataloader, checkpoint=False):
 
         return acc
 
+
 pbar = tqdm(range(start_epoch, args.epochs))
+val_acc = 0
 for epoch in pbar:
     if epoch == 0:
         pbar.set_description('Epoch: %d' % (epoch))
