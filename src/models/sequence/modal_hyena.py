@@ -76,6 +76,7 @@ class PositionalEmbedding(OptimModule):
         # To compute the right embeddings we use the "proper" linspace
         t_rescaled = torch.linspace(0, seq_len - 1, seq_len)[None, :, None]
         w = 2 * math.pi * t_rescaled / seq_len  # 1, L, 1
+        # w: (B, L, D)
 
         f = torch.linspace(1e-4, bands - 1, bands)[None, None]
         z = torch.exp(-1j * f * w)
@@ -83,6 +84,7 @@ class PositionalEmbedding(OptimModule):
         self.register("z", z, lr=lr_pos_emb)
         # self.register("t", t, lr=0.0) # todo
         self.register("t", t[:, :, :, None], lr=0.0)
+        # t: (B, L, D, N)
 
     def forward(self, L):
         return self.z[:, :L], self.t[:, :L]
@@ -184,7 +186,7 @@ class HyenaFilter(OptimModule):
 
         # return h
         R = self.implicit_filter(z)
-        R = R.reshape(1, self.seq_len, self.d_model, self.hidden_ssm_dim)
+        R = R.reshape(1, L, self.d_model, self.hidden_ssm_dim)
         K = self.modulation(t, R)
         K = K.sum(-1)
         return K
