@@ -32,7 +32,6 @@ OmegaConf.register_new_resolver('div_up', lambda x, y: (x + y - 1) // y)
 
 class DummyExperiment:
     """Dummy experiment."""
-
     def nop(self, *args, **kw):
         pass
 
@@ -62,7 +61,6 @@ def rank_zero_experiment(fn: Callable) -> Callable:
 
 
 class CustomWandbLogger(WandbLogger):
-
     def __init__(self, *args, **kwargs):
         """Modified logger that insists on a wandb.init() call and catches wandb's error if thrown."""
 
@@ -85,10 +83,8 @@ class CustomWandbLogger(WandbLogger):
             attach_id = getattr(self, "_attach_id", None)
             if wandb.run is not None:
                 # wandb process already created in this instance
-                rank_zero_warn(
-                    "There is a wandb run already in progress and newly created instances of `WandbLogger` will reuse"
-                    " this run. If this is not desired, call `wandb.finish()` before instantiating `WandbLogger`."
-                )
+                rank_zero_warn("There is a wandb run already in progress and newly created instances of `WandbLogger` will reuse"
+                               " this run. If this is not desired, call `wandb.finish()` before instantiating `WandbLogger`.")
                 self._experiment = wandb.run
             elif attach_id is not None and hasattr(wandb, "_attach"):
                 # attach to wandb process referenced
@@ -127,9 +123,7 @@ class SequenceLightningModule(pl.LightningModule):
         self.save_hyperparameters(config, logger=False)
 
         # Dataset arguments
-        self.dataset = SequenceDataset.registry[self.hparams.dataset._name_](
-            **self.hparams.dataset
-        )
+        self.dataset = SequenceDataset.registry[self.hparams.dataset._name_](**self.hparams.dataset)
 
         # Check hparams
         self._check_config()
@@ -154,12 +148,8 @@ class SequenceLightningModule(pl.LightningModule):
             self._has_setup = True
 
         # Convenience feature: if model specifies encoder, combine it with main encoder
-        encoder_cfg = utils.to_list(self.hparams.encoder) + utils.to_list(
-            self.hparams.model.pop("encoder", None)
-        )
-        decoder_cfg = utils.to_list(
-            self.hparams.model.pop("decoder", None)
-        ) + utils.to_list(self.hparams.decoder)
+        encoder_cfg = utils.to_list(self.hparams.encoder) + utils.to_list(self.hparams.model.pop("encoder", None))
+        decoder_cfg = utils.to_list(self.hparams.model.pop("decoder", None)) + utils.to_list(self.hparams.decoder)
 
         # Instantiate model
         self.model = utils.instantiate(registry.model, self.hparams.model)
@@ -171,17 +161,11 @@ class SequenceLightningModule(pl.LightningModule):
                     getattr(module, name)(**kwargs)
 
         # Instantiate the task
-        self.task = utils.instantiate(
-            tasks.registry, self.hparams.task, dataset=self.dataset, model=self.model
-        )
+        self.task = utils.instantiate(tasks.registry, self.hparams.task, dataset=self.dataset, model=self.model)
 
         # Create encoders and decoders
-        encoder = encoders.instantiate(
-            encoder_cfg, dataset=self.dataset, model=self.model
-        )
-        decoder = decoders.instantiate(
-            decoder_cfg, model=self.model, dataset=self.dataset
-        )
+        encoder = encoders.instantiate(encoder_cfg, dataset=self.dataset, model=self.model)
+        decoder = decoders.instantiate(decoder_cfg, model=self.model, dataset=self.dataset)
 
         # Extract the modules so they show up in the top level parameter count
         self.encoder = U.PassthroughSequential(self.task.encoder, encoder)
@@ -214,6 +198,7 @@ class SequenceLightningModule(pl.LightningModule):
         assert self.hparams.train.state.mode in [None, "none", "null", "reset", "bptt", "tbptt"]
         assert ((n := self.hparams.train.state.n_context) is None or isinstance(n, int) and n >= 0)
         assert ((n := self.hparams.train.state.n_context_eval) is None or isinstance(n, int) and n >= 0)
+
     def _initialize_state(self):
         """Called at model setup and start of epoch to completely reset state"""
         self._state = None
@@ -349,9 +334,9 @@ class SequenceLightningModule(pl.LightningModule):
         # Reset training torchmetrics
         self.task._reset_torchmetrics("train")
 
-    def training_epoch_end(self, outputs):
+    def on_training_epoch_end(self, outputs):
         # Log training torchmetrics
-        super().training_epoch_end(outputs)
+        super().on_training_epoch_end(outputs)
         # self.log_dict(
         #     {f"train/{k}": v for k, v in self.task.get_torchmetrics("train").items()},
         #     on_step=False,
@@ -366,9 +351,12 @@ class SequenceLightningModule(pl.LightningModule):
         for name in self.val_loader_names:
             self.task._reset_torchmetrics(name)
 
-    def validation_epoch_end(self, outputs):
+    def on_validation_epoch_end(self):
         # Log all validation torchmetrics
-        super().validation_epoch_end(outputs)
+        # TODO: temporary change to adapt for pytorch lightning incompatibility
+        # super().on_validation_epoch_end(self.validation_step_outputs)
+        # self.validation_step_outputs.clear()
+        pass
         # for name in self.val_loader_names:
         #     self.log_dict(
         #         {f"{name}/{k}": v for k, v in self.task.get_torchmetrics(name).items()},
@@ -435,18 +423,14 @@ class SequenceLightningModule(pl.LightningModule):
         ema = (self.val_loader_names[dataloader_idx].endswith("/ema") and self.optimizers().optimizer.stepped)
         if ema:
             self.optimizers().swap_ema()
-        loss = self._shared_step(
-            batch, batch_idx, prefix=self.val_loader_names[dataloader_idx]
-        )
+        loss = self._shared_step(batch, batch_idx, prefix=self.val_loader_names[dataloader_idx])
         if ema:
             self.optimizers().swap_ema()
 
         return loss
 
     def test_step(self, batch, batch_idx, dataloader_idx=0):
-        return self._shared_step(
-            batch, batch_idx, prefix=self.test_loader_names[dataloader_idx]
-        )
+        return self._shared_step(batch, batch_idx, prefix=self.test_loader_names[dataloader_idx])
 
     def configure_optimizers(self):
         # Set zero weight decay for some params
@@ -471,9 +455,7 @@ class SequenceLightningModule(pl.LightningModule):
         print("Hyperparameter groups", hps)
         for hp in hps:
             params = [p for p in all_params if getattr(p, "_optim", None) == hp]
-            optimizer.add_param_group(
-                {"params": params, **self.hparams.optimizer, **hp}
-            )
+            optimizer.add_param_group({"params": params, **self.hparams.optimizer, **hp})
 
         # ## Layer Decay ###
 
@@ -493,11 +475,7 @@ class SequenceLightningModule(pl.LightningModule):
 
                 # Add to layer wise group
                 if layer_id not in layer_wise_groups:
-                    layer_wise_groups[layer_id] = {
-                        'params': [],
-                        'lr': None,
-                        'weight_decay': self.hparams.optimizer.weight_decay
-                    }
+                    layer_wise_groups[layer_id] = {'params': [], 'lr': None, 'weight_decay': self.hparams.optimizer.weight_decay}
                 layer_wise_groups[layer_id]['params'].append(p)
 
                 if layer_id > num_max_layers:
@@ -505,7 +483,7 @@ class SequenceLightningModule(pl.LightningModule):
 
             # Update lr for each layer
             for layer_id, group in layer_wise_groups.items():
-                group['lr'] = self.hparams.optimizer.lr * (self.hparams.train.layer_decay.decay ** (num_max_layers - layer_id))
+                group['lr'] = self.hparams.optimizer.lr * (self.hparams.train.layer_decay.decay**(num_max_layers - layer_id))
 
             # Reset the torch optimizer's param groups
             optimizer.param_groups = []
@@ -518,9 +496,7 @@ class SequenceLightningModule(pl.LightningModule):
         # Configure scheduler
         if "scheduler" not in self.hparams:
             return optimizer
-        lr_scheduler = utils.instantiate(
-            registry.scheduler, self.hparams.scheduler, optimizer
-        )
+        lr_scheduler = utils.instantiate(registry.scheduler, self.hparams.scheduler, optimizer)
         scheduler = {
             "scheduler": lr_scheduler,
             "interval": self.hparams.train.interval,  # 'epoch' or 'step'
@@ -537,9 +513,7 @@ class SequenceLightningModule(pl.LightningModule):
     def _eval_dataloaders_names(self, loaders, prefix):
         """Process loaders into a list of names and loaders"""
         if utils.is_dict(loaders):
-            return [
-                f"{prefix}/{k}" if k is not None else prefix for k in loaders.keys()
-            ], list(loaders.values())
+            return [f"{prefix}/{k}" if k is not None else prefix for k in loaders.keys()], list(loaders.values())
         elif utils.is_list(loaders):
             return [f"{prefix}/{i}" for i in range(len(loaders))], loaders
         else:
@@ -550,9 +524,7 @@ class SequenceLightningModule(pl.LightningModule):
         val_loaders = self.dataset.val_dataloader(**self.hparams.loader)
         test_loaders = self.dataset.test_dataloader(**self.hparams.loader)
         val_loader_names, val_loaders = self._eval_dataloaders_names(val_loaders, "val")
-        test_loader_names, test_loaders = self._eval_dataloaders_names(
-            test_loaders, "test"
-        )
+        test_loader_names, test_loaders = self._eval_dataloaders_names(test_loaders, "test")
 
         # Duplicate datasets for ema
         if self.hparams.train.ema > 0.0:
@@ -580,6 +552,7 @@ class SequenceLightningModule(pl.LightningModule):
 
 
 # ## pytorch-lightning utils and entrypoint ###
+
 
 def create_trainer(config, **kwargs):
     callbacks: List[pl.Callback] = []
@@ -627,8 +600,7 @@ def create_trainer(config, **kwargs):
 
     # Init lightning trainer
     log.info(f"Instantiating trainer <{config.trainer._target_}>")
-    trainer = hydra.utils.instantiate(
-        config.trainer, callbacks=callbacks, logger=logger)
+    trainer = hydra.utils.instantiate(config.trainer, callbacks=callbacks, logger=logger)
 
     return trainer
 

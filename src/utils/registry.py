@@ -37,6 +37,8 @@ layer = {
     "h3-conv": "src.models.sequence.h3_conv.H3Conv",
     "hyena": "src.models.sequence.hyena.HyenaOperator",
     "hyena-filter": "src.models.sequence.hyena.HyenaFilter",
+    "modal-hyena-filter": "src.models.sequence.modal_hyena.HyenaFilter",
+    "modal_hyena": "src.models.sequence.modal_hyena.HyenaOperator",
     "vit": "src.models.sequence.mha.VitAttention",
 }
 

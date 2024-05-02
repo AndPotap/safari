@@ -2,7 +2,7 @@
 defaults:
   - /pipeline: cifar-2d
   - /model: vit
-  - override /model/layer: hyena
+  - override /model/layer: modal_hyena
   - override /scheduler: cosine_warmup_timm
 
 dataset:
@@ -31,7 +31,7 @@ trainer:
   max_epochs: 100
   precision: 16
   devices: 1
-  # replace_sampler_ddp: true  # only true if using RepeatAug # TODO: tmp changes for pytorch lightning compatibility
+  # replace_sampler_ddp: true  # only true if using RepeatAug
 
 train:
   seed: 1112
