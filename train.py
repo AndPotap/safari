@@ -1,19 +1,26 @@
-import torch.backends
+import copy
 import os
 import random
 import time
+from functools import partial, wraps
 from typing import Callable, List, Sequence
+
 import hydra
+import numpy as np
 import pytorch_lightning as pl
 import torch
+import torch.nn as nn
 import wandb
-from omegaconf import OmegaConf
+from hydra.utils import get_original_cwd
+from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities import rank_zero_only, rank_zero_warn
+from tqdm.auto import tqdm
+
 import src.models.nn.utils as U
 import src.utils as utils
 import src.utils.train
-from src.dataloaders import SequenceDataset
+from src.dataloaders import SequenceDataset  # TODO make registry
 from src.tasks import decoders, encoders, tasks
 from src.utils import registry
 from src.utils.optim_groups import add_optimizer_hooks
@@ -21,6 +28,7 @@ from src.utils.optim_groups import add_optimizer_hooks
 log = src.utils.train.get_logger(__name__)
 
 # Turn on TensorFloat32 (speeds up large model training substantially)
+import torch.backends
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
@@ -28,8 +36,6 @@ OmegaConf.register_new_resolver('eval', eval)
 OmegaConf.register_new_resolver('div_up', lambda x, y: (x + y - 1) // y)
 
 # Lots of annoying hacks to get WandbLogger to continuously retry on failure
-
-
 class DummyExperiment:
     """Dummy experiment."""
 
@@ -50,7 +56,7 @@ class DummyExperiment:
 def rank_zero_experiment(fn: Callable) -> Callable:
     """Returns the real experiment on rank 0 and otherwise the DummyExperiment."""
 
-    # @wraps(fn)
+    @wraps(fn)
     def experiment(self):
         @rank_zero_only
         def get_experiment():
@@ -137,14 +143,13 @@ class SequenceLightningModule(pl.LightningModule):
         # PL has some bugs, so add hooks and make sure they're only called once
         self._has_setup = False
 
-        self.setup()  # Added by KS
+        self.setup()  ## Added by KS
 
     def setup(self, stage=None):
         if not self.hparams.train.disable_dataset:
             self.dataset.setup()
 
-        # We need to set up the model in setup() because for some reason when training with DDP,
-        # one GPU uses much more memory than the others
+        # We need to set up the model in setup() because for some reason when training with DDP, one GPU uses much more memory than the others
         # In order to not overwrite the model multiple times during different stages, we need this hack
         # TODO PL 1.5 seems to have an option to skip hooks to avoid this
         # https://github.com/PyTorchLightning/pytorch-lightning/issues/5410#issuecomment-762257024
@@ -212,8 +217,17 @@ class SequenceLightningModule(pl.LightningModule):
 
     def _check_config(self):
         assert self.hparams.train.state.mode in [None, "none", "null", "reset", "bptt", "tbptt"]
-        assert ((n := self.hparams.train.state.n_context) is None or isinstance(n, int) and n >= 0)
-        assert ((n := self.hparams.train.state.n_context_eval) is None or isinstance(n, int) and n >= 0)
+        assert (
+            (n := self.hparams.train.state.n_context) is None
+            or isinstance(n, int)
+            and n >= 0
+        )
+        assert (
+            (n := self.hparams.train.state.n_context_eval) is None
+            or isinstance(n, int)
+            and n >= 0
+        )
+
     def _initialize_state(self):
         """Called at model setup and start of epoch to completely reset state"""
         self._state = None
@@ -282,8 +296,7 @@ class SequenceLightningModule(pl.LightningModule):
     #         assert len(z) == 1 and isinstance(z[0], dict), "Dataloader must return dictionary of extra arguments"
     #         z = z[0]
 
-    #     x, w = self.encoder(x, **z) # w can model-specific constructions such as key_padding_mask
-    #     for transformers or state for RNNs
+    #     x, w = self.encoder(x, **z) # w can model-specific constructions such as key_padding_mask for transformers or state for RNNs
     #     x, state = self.model(x, **w, state=self._state)
     #     self._state = state
     #     x, w = self.decoder(x, state=state, **z)
@@ -293,7 +306,7 @@ class SequenceLightningModule(pl.LightningModule):
         return self.task.forward(batch, self.encoder, self.model, self.decoder, self._state)
 
     def step(self, x_t):
-        x_t, *_ = self.encoder(x_t)  # Potential edge case for encoders that expect (B, L, H)?
+        x_t, *_ = self.encoder(x_t) # Potential edge case for encoders that expect (B, L, H)?
         x_t, state = self.model.step(x_t, state=self._state)
         self._state = state
         # x_t = x_t[:, None, ...] # Dummy length
@@ -321,7 +334,7 @@ class SequenceLightningModule(pl.LightningModule):
         # Calculate torchmetrics
         torchmetrics = getattr(self, f'{prefix}_torchmetrics')
         torchmetrics(x, y, loss=loss)
-
+        
         log_on_step = 'eval' in self.hparams and self.hparams.eval.get('log_on_step', False) and prefix == 'train'
 
         self.log_dict(
@@ -432,7 +445,10 @@ class SequenceLightningModule(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        ema = (self.val_loader_names[dataloader_idx].endswith("/ema") and self.optimizers().optimizer.stepped)
+        ema = (
+            self.val_loader_names[dataloader_idx].endswith("/ema")
+            and self.optimizers().optimizer.stepped
+        )  # There's a bit of an annoying edge case with the first (0-th) epoch; it has to be excluded due to the initial sanity check
         if ema:
             self.optimizers().swap_ema()
         loss = self._shared_step(
@@ -475,7 +491,7 @@ class SequenceLightningModule(pl.LightningModule):
                 {"params": params, **self.hparams.optimizer, **hp}
             )
 
-        # ## Layer Decay ###
+        ### Layer Decay ###
 
         if self.hparams.train.layer_decay['_name_'] is not None:
             get_num_layer = utils.instantiate(
@@ -500,8 +516,7 @@ class SequenceLightningModule(pl.LightningModule):
                     }
                 layer_wise_groups[layer_id]['params'].append(p)
 
-                if layer_id > num_max_layers:
-                    num_max_layers = layer_id
+                if layer_id > num_max_layers: num_max_layers = layer_id
 
             # Update lr for each layer
             for layer_id, group in layer_wise_groups.items():
@@ -579,7 +594,7 @@ class SequenceLightningModule(pl.LightningModule):
         return test_loaders
 
 
-# ## pytorch-lightning utils and entrypoint ###
+### pytorch-lightning utils and entrypoint ###
 
 def create_trainer(config, **kwargs):
     callbacks: List[pl.Callback] = []
@@ -622,7 +637,7 @@ def create_trainer(config, **kwargs):
         config.trainer.strategy = dict(
             _target_='pytorch_lightning.strategies.DDPStrategy',
             find_unused_parameters=False,
-            gradient_as_bucket_view=True,
+            gradient_as_bucket_view=True,  # https://pytorch-lightning.readthedocs.io/en/stable/advanced/advanced_gpu.html#ddp-optimizations
         )
 
     # Init lightning trainer
@@ -638,7 +653,7 @@ def train(config):
         pl.seed_everything(config.train.seed, workers=True)
     trainer = create_trainer(config)
     model = SequenceLightningModule(config)
-    
+
     # Run initial validation epoch (useful for debugging, finetuning)
     if config.train.validate_at_start:
         print("Running validation before training")
@@ -652,11 +667,10 @@ def train(config):
         trainer.test(model)
 
 
-@hydra.main(config_path="/scratch/sl8160/repos/safari/configs", config_name="hyena-vit-cifar.yaml")
+
+
+@hydra.main(config_path="configs", config_name="config.yaml")
 def main(config: OmegaConf):
-    # def main():
-    #     path = "/scratch/sl8160/repos/safari/configs/experiment/cifar/hyena-vit-cifar.yaml"
-    #     config = OmegaConf.load(path)
 
     # Process config:
     # - register evaluation resolver
