@@ -56,10 +56,11 @@ tolerance: # fault tolerance for training on preemptible machines
 # Set `~wandb` or `wandb=null` or `wandb.mode=disabled` to disable logging
 # If other loggers are added, it would make sense to put this one level lower under train/ or logger/
 wandb:
-  project: long-conv
+  project: ssm
   group: ""
   job_type: training
-  mode: online # choices=['online', 'offline', 'disabled']
+  # mode: disabled # choices=['online', 'offline', 'disabled']
+  mode: online
   name: null
   save_dir: "."
   id: ${.name} # pass correct id to resume experiment!
